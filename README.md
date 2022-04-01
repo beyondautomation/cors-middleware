@@ -13,7 +13,7 @@ This middleware implements [Cross-origin resource sharing](https://en.wikipedia.
 Install using [composer](https://getcomposer.org/).
 
 ``` bash
-$ composer require tuupola/cors-middleware
+$ composer require beyondautomation/cors-middleware
 ```
 
 ## Usage

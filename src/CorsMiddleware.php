@@ -50,264 +50,233 @@ use Tuupola\Middleware\DoublePassTrait;
 
 final class CorsMiddleware implements MiddlewareInterface
 {
-    use DoublePassTrait;
+	use DoublePassTrait;
 
-    /**
-     * @var \Psr\Log\LoggerInterface|null
-     */
-    private $logger;
+	/**
+	 * @var \Psr\Log\LoggerInterface|null
+	 */
+	private $logger;
 
-    /**
-     * @var mixed[]
-     */
-    private $options = [
-        "origin" => ["*"],
-        "methods" => ["GET", "POST", "PUT", "PATCH", "DELETE"],
-        "headers.allow" => [],
-        "headers.expose" => [],
-        "credentials" => false,
-        "origin.server" => null,
-        "cache" => 0,
-        "error" => null
-    ];
+	/**
+	 * @var mixed[]
+	 */
+	private $options = [
+		"origin" => ["*"],
+		"methods" => ["GET", "POST", "PUT", "PATCH", "DELETE"],
+		"headers.allow" => [],
+		"headers.expose" => [],
+		"credentials" => false,
+		"origin.server" => null,
+		"cache" => 0,
+		"error" => null
+	];
 
-    public function __construct(array $options = [])
-    {
-        /* TODO: This only exists to for BC. */
-        if (isset($options["origin"])) {
-            $options["origin"] = (array) $options["origin"];
-        }
-        /* Store passed in options overwriting any defaults. */
-        $this->hydrate($options);
-    }
+	public function __construct(array $options = [])
+	{
+		/* TODO: This only exists to for BC. */
+		if (isset($options["origin"])) {
+			$options["origin"] = (array) $options["origin"];
+		}
+		/* Store passed in options overwriting any defaults. */
+		$this->hydrate($options);
+	}
 
-    /**
-     * Execute as PSR-15 middleware.
-     */
-    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
-    {
-        $response = (new ResponseFactory())->createResponse();
+	/**
+	 * Execute as PSR-15 middleware.
+	 */
+	public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+	{
+		$response = (new ResponseFactory())->createResponse();
 
-        $analyzer = CorsAnalyzer::instance($this->buildSettings($request, $response));
-        if ($this->logger) {
-            $analyzer->setLogger($this->logger);
-        }
-        $cors = $analyzer->analyze($request);
+		$analyzer = CorsAnalyzer::instance($this->buildSettings($request, $response));
+		if ($this->logger) {
+			$analyzer->setLogger($this->logger);
+		}
+		$cors = $analyzer->analyze($request);
 
-        switch ($cors->getRequestType()) {
-            case CorsAnalysisResultInterface::ERR_ORIGIN_NOT_ALLOWED:
-                $response = $response->withStatus(401);
-                return $this->processError($request, $response, [
-                    "message" => "CORS request origin is not allowed.",
-                ]);
-            case CorsAnalysisResultInterface::ERR_METHOD_NOT_SUPPORTED:
-                $response = $response->withStatus(401);
-                return $this->processError($request, $response, [
-                    "message" => "CORS requested method is not supported.",
-                ]);
-            case CorsAnalysisResultInterface::ERR_HEADERS_NOT_SUPPORTED:
-                $response = $response->withStatus(401);
-                return $this->processError($request, $response, [
-                    "message" => "CORS requested header is not allowed.",
-                ]);
-            case CorsAnalysisResultInterface::TYPE_PRE_FLIGHT_REQUEST:
-                $cors_headers = $cors->getResponseHeaders();
-                foreach ($cors_headers as $header => $value) {
-                    /* Diactoros errors on integer values. */
-                    if (false === is_array($value)) {
-                        $value = (string)$value;
-                    }
-                    $response = $response->withHeader($header, $value);
-                }
-                return $response->withStatus(200);
-            case CorsAnalysisResultInterface::TYPE_REQUEST_OUT_OF_CORS_SCOPE:
-                return $handler->handle($request);
-            default:
-                /* Actual CORS request. */
-                $response = $handler->handle($request);
-                $cors_headers = $cors->getResponseHeaders();
-                $cors_headers = $this->fixHeaders($cors_headers);
+		switch ($cors->getRequestType()) {
+			case CorsAnalysisResultInterface::ERR_ORIGIN_NOT_ALLOWED:
+				$response = $response->withStatus(401);
+				return $this->processError($request, $response, [
+					"message" => "CORS request origin is not allowed.",
+				]);
+			case CorsAnalysisResultInterface::ERR_METHOD_NOT_SUPPORTED:
+				$response = $response->withStatus(401);
+				return $this->processError($request, $response, [
+					"message" => "CORS requested method is not supported.",
+				]);
+			case CorsAnalysisResultInterface::ERR_HEADERS_NOT_SUPPORTED:
+				$response = $response->withStatus(401);
+				return $this->processError($request, $response, [
+					"message" => "CORS requested header is not allowed.",
+				]);
+			case CorsAnalysisResultInterface::TYPE_PRE_FLIGHT_REQUEST:
+				$cors_headers = $cors->getResponseHeaders();
+				foreach ($cors_headers as $header => $value) {
+					/* Diactoros errors on integer values. */
+					if (false === is_array($value)) {
+						$value = (string)$value;
+					}
+					$response = $response->withHeader($header, $value);
+				}
+				return $response->withStatus(200);
+			case CorsAnalysisResultInterface::TYPE_REQUEST_OUT_OF_CORS_SCOPE:
+				return $handler->handle($request);
+			default:
+				/* Actual CORS request. */
+				$response = $handler->handle($request);
+				$cors_headers = $cors->getResponseHeaders();
+				foreach ($cors_headers as $header => $value) {
+					/* Diactoros errors on integer values. */
+					if (false === is_array($value)) {
+						$value = (string)$value;
+					}
+					$response = $response->withHeader($header, $value);
+				}
+				return $response;
+		}
+	}
 
-                foreach ($cors_headers as $header => $value) {
-                    /* Diactoros errors on integer values. */
-                    if (false === is_array($value)) {
-                        $value = (string)$value;
-                    }
-                    $response = $response->withHeader($header, $value);
-                }
-                return $response;
-        }
-    }
+	/**
+	 * Hydrate all options from the given array.
+	 */
+	private function hydrate(array $data = []): void
+	{
+		foreach ($data as $key => $value) {
+			/* https://github.com/facebook/hhvm/issues/6368 */
+			$key = str_replace(".", " ", $key);
+			$method = lcfirst(ucwords($key));
+			$method = str_replace(" ", "", $method);
+			$callable = [$this, $method];
 
-    /**
-     * Hydrate all options from the given array.
-     */
-    private function hydrate(array $data = []): void
-    {
-        foreach ($data as $key => $value) {
-            /* https://github.com/facebook/hhvm/issues/6368 */
-            $key = str_replace(".", " ", $key);
-            $method = lcfirst(ucwords($key));
-            $method = str_replace(" ", "", $method);
-            $callable = [$this, $method];
+			if (is_callable($callable)) {
+				/* Try to use setter */
+				call_user_func($callable, $value);
+			} else {
+				/* Or fallback to setting option directly */
+				$this->options[$key] = $value;
+			}
+		}
+	}
 
-            if (is_callable($callable)) {
-                /* Try to use setter */
-                call_user_func($callable, $value);
-            } else {
-                /* Or fallback to setting option directly */
-                $this->options[$key] = $value;
-            }
-        }
-    }
+	/**
+	 * Build a CORS settings object.
+	 */
+	private function buildSettings(ServerRequestInterface $request, ResponseInterface $response): CorsSettings
+	{
+		$settings = new CorsSettings();
 
-    /**
-     * Build a CORS settings object.
-     */
-    private function buildSettings(ServerRequestInterface $request, ResponseInterface $response): CorsSettings
-    {
-        $settings = new CorsSettings();
+		$settings->setServerOrigin('https', $this->options["origin.server"], 443);
+		$settings->setPreFlightCacheMaxAge($this->options["cache"]);
+		$settings->setCredentialsSupported($this->options["credentials"]);
+		$settings->setAllowedOrigins($this->options["origin"]);
+		$settings->setAllowedMethods($this->options["methods"]);
+		$settings->setAllowedHeaders($this->options["headers.allow"]);
+		$settings->setExposedHeaders($this->options["headers.expose"]);
+		$settings->enableCheckHost();
 
-        $origin = array_fill_keys((array) $this->options["origin"], true);
-        $settings->setRequestAllowedOrigins($origin);
+		return $settings;
+	}
 
-        if (is_callable($this->options["methods"])) {
-            $methods = (array) $this->options["methods"]($request, $response);
-        } else {
-            $methods = $this->options["methods"];
-        }
-        $methods = array_fill_keys($methods, true);
-        $settings->setRequestAllowedMethods($methods);
+	/**
+	 * Set allowed origin.
+	 */
+	private function origin(array $origin): void
+	{
+		$this->options["origin"] = $origin;
+	}
 
-        $headers = array_fill_keys($this->options["headers.allow"], true);
-        $headers = array_change_key_case($headers, CASE_LOWER);
-        $settings->setRequestAllowedHeaders($headers);
+	/**
+	 * Set request methods to be allowed.
+	 * @param callable|array $methods.
+	 */
+	private function methods($methods): void
+	{
+		if (is_callable($methods)) {
+			if ($methods instanceof Closure) {
+				$this->options["methods"] = $methods->bindTo($this);
+			} else {
+				$this->options["methods"] = $methods;
+			}
+		} else {
+			$this->options["methods"] = (array) $methods;
+		}
+	}
 
-        $headers = array_fill_keys($this->options["headers.expose"], true);
-        $settings->setResponseExposedHeaders($headers);
+	/**
+	 * Set headers to be allowed.
+	 */
+	private function headersAllow(array $headers): void
+	{
+		$this->options["headers.allow"] = $headers;
+	}
 
-        $settings->setRequestCredentialsSupported($this->options["credentials"]);
+	/**
+	 * Set headers to be exposed.
+	 */
+	private function headersExpose(array $headers): void
+	{
+		$this->options["headers.expose"] = $headers;
+	}
 
-        if (is_string($this->options["origin.server"])) {
-            $settings->setServerOrigin($this->options["origin.server"]);
-        }
+	/**
+	 * Enable or disable cookies and authentication.
+	 */
+	private function credentials(bool $credentials): void
+	{
+		$this->options["credentials"] = $credentials;
+	}
 
-        $settings->setPreFlightCacheMaxAge($this->options["cache"]);
+	/**
+	 * Set the server origin.
+	 */
+	private function originServer(?string $origin): void
+	{
+		$this->options["origin.server"] = $origin;
+	}
 
-        return $settings;
-    }
+	/**
+	 * Set the cache time in seconds.
+	 */
+	private function cache(int $cache): void
+	{
+		$this->options["cache"] = $cache;
+	}
 
-    /**
-     * Edge cannot handle multiple Access-Control-Expose-Headers headers
-     */
-    private function fixHeaders(array $headers): array
-    {
-        if (isset($headers[CorsResponseHeaders::EXPOSE_HEADERS])) {
-            $headers[CorsResponseHeaders::EXPOSE_HEADERS] =
-                implode(",", $headers[CorsResponseHeaders::EXPOSE_HEADERS]);
-        }
-        return $headers;
-    }
+	/**
+	 * Set the error handler.
+	 */
+	private function error(callable $error): void
+	{
+		if ($error instanceof Closure) {
+			$this->options["error"] = $error->bindTo($this);
+		} else {
+			$this->options["error"] = $error;
+		}
+	}
 
-    /**
-     * Set allowed origin.
-     */
-    private function origin(array $origin): void
-    {
-        $this->options["origin"] = $origin;
-    }
+	/**
+	 * Set the PSR-3 logger.
+	 */
+	private function logger(LoggerInterface $logger = null): void
+	{
+		$this->logger = $logger;
+	}
 
-    /**
-     * Set request methods to be allowed.
-     * @param callable|array $methods.
-     */
-    private function methods($methods): void
-    {
-        if (is_callable($methods)) {
-            if ($methods instanceof Closure) {
-                $this->options["methods"] = $methods->bindTo($this);
-            } else {
-                $this->options["methods"] = $methods;
-            }
-        } else {
-            $this->options["methods"] = (array) $methods;
-        }
-    }
-
-    /**
-     * Set headers to be allowed.
-     */
-    private function headersAllow(array $headers): void
-    {
-        $this->options["headers.allow"] = $headers;
-    }
-
-    /**
-     * Set headers to be exposed.
-     */
-    private function headersExpose(array $headers): void
-    {
-        $this->options["headers.expose"] = $headers;
-    }
-
-    /**
-     * Enable or disable cookies and authentication.
-     */
-    private function credentials(bool $credentials): void
-    {
-        $this->options["credentials"] = $credentials;
-    }
-
-    /**
-     * Set the server origin.
-     */
-    private function originServer(?string $origin): void
-    {
-        $this->options["origin.server"] = $origin;
-    }
-
-    /**
-     * Set the cache time in seconds.
-     */
-    private function cache(int $cache): void
-    {
-        $this->options["cache"] = $cache;
-    }
-
-    /**
-     * Set the error handler.
-     */
-    private function error(callable $error): void
-    {
-        if ($error instanceof Closure) {
-            $this->options["error"] = $error->bindTo($this);
-        } else {
-            $this->options["error"] = $error;
-        }
-    }
-
-    /**
-     * Set the PSR-3 logger.
-     */
-    private function logger(LoggerInterface $logger = null): void
-    {
-        $this->logger = $logger;
-    }
-
-    /**
-     * Call the error handler if it exists.
-     */
-    private function processError(
-        ServerRequestInterface $request,
-        ResponseInterface $response,
-        array $arguments = null
-    ): ResponseInterface {
-        if (is_callable($this->options["error"])) {
-            $handler_response = $this->options["error"]($request, $response, $arguments);
-            if (is_a($handler_response, "\Psr\Http\Message\ResponseInterface")) {
-                return $handler_response;
-            }
-        }
-        return $response;
-    }
+	/**
+	 * Call the error handler if it exists.
+	 */
+	private function processError(
+		ServerRequestInterface $request,
+		ResponseInterface $response,
+		array $arguments = null
+	): ResponseInterface {
+		if (is_callable($this->options["error"])) {
+			$handler_response = $this->options["error"]($request, $response, $arguments);
+			if (is_a($handler_response, "\Psr\Http\Message\ResponseInterface")) {
+				return $handler_response;
+			}
+		}
+		return $response;
+	}
 }
