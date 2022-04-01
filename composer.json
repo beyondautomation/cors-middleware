@@ -1,5 +1,5 @@
 {
-    "name": "tuupola/cors-middleware",
+    "name": "beyondautomation/cors-middleware",
     "description": "PSR-7 and PSR-15 CORS middleware",
     "keywords": [
         "middleware",
