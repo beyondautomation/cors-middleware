@@ -86,13 +86,13 @@ final class CorsMiddleware implements MiddlewareInterface
 	 */
 	public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
 	{
-		$response = (new ResponseFactory())->createResponse();
-
-		$analyzer = CorsAnalyzer::instance($this->buildSettings($request, $response));
+		$analyzer = CorsAnalyzer::instance($this->buildSettings());
 		if ($this->logger) {
 			$analyzer->setLogger($this->logger);
 		}
 		$cors = $analyzer->analyze($request);
+
+		$response = (new ResponseFactory())->createResponse();
 
 		switch ($cors->getRequestType()) {
 			case CorsAnalysisResultInterface::ERR_ORIGIN_NOT_ALLOWED:
@@ -110,8 +110,15 @@ final class CorsMiddleware implements MiddlewareInterface
 				return $this->processError($request, $response, [
 					"message" => "CORS requested header is not allowed.",
 				]);
+			case CorsAnalysisResultInterface::ERR_NO_HOST_HEADER:
+				$response = $response->withStatus(401);
+				return $this->processError($request, $response, [
+					"message" => "CORS request is missing header host.",
+				]);
 			case CorsAnalysisResultInterface::TYPE_PRE_FLIGHT_REQUEST:
+				/* Pre Flight request. */
 				$cors_headers = $cors->getResponseHeaders();
+
 				foreach ($cors_headers as $header => $value) {
 					/* Diactoros errors on integer values. */
 					if (false === is_array($value)) {
@@ -126,6 +133,7 @@ final class CorsMiddleware implements MiddlewareInterface
 				/* Actual CORS request. */
 				$response = $handler->handle($request);
 				$cors_headers = $cors->getResponseHeaders();
+
 				foreach ($cors_headers as $header => $value) {
 					/* Diactoros errors on integer values. */
 					if (false === is_array($value)) {
@@ -162,17 +170,20 @@ final class CorsMiddleware implements MiddlewareInterface
 	/**
 	 * Build a CORS settings object.
 	 */
-	private function buildSettings(ServerRequestInterface $request, ResponseInterface $response): CorsSettings
+	private function buildSettings(): CorsSettings
 	{
 		$settings = new CorsSettings();
 
-		$settings->setServerOrigin('https', $this->options["origin.server"], 443);
-		$settings->setPreFlightCacheMaxAge($this->options["cache"]);
-		$settings->setCredentialsSupported($this->options["credentials"]);
-		$settings->setAllowedOrigins($this->options["origin"]);
-		$settings->setAllowedMethods($this->options["methods"]);
-		$settings->setAllowedHeaders($this->options["headers.allow"]);
-		$settings->setExposedHeaders($this->options["headers.expose"]);
+		$settings->setServerOrigin('https', $this->options['origin.server'], 443);
+		$settings->setPreFlightCacheMaxAge($this->options['cache']);
+		$settings->setCredentialsSupported($this->options['credentials']);
+		$settings->setAllowedOrigins($this->options['origin']);
+		$settings->setAllowedMethods($this->options['methods']);
+		$settings->setAllowedHeaders($this->options['headers.allow']);
+		$settings->setExposedHeaders($this->options['headers.expose']);
+		$settings->enableAddAllowedMethodsToPreFlightResponse();
+		$settings->enableAddAllowedHeadersToPreFlightResponse();
+
 		$settings->enableCheckHost();
 
 		return $settings;
